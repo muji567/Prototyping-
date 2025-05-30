@@ -1,0 +1,131 @@
+#include <IRremote.hpp>
+
+// Motor driver pins
+const int motorA1 = 5;
+const int motorA2 = 6;
+const int motorB1 = 7;
+const int motorB2 = 8;
+const int enableA = 4;   // Should be PWM capable
+const int enableB = 10;  // PWM
+
+// IR receiver pin
+const int IR_PIN = 2;
+
+IRrecv irrecv(IR_PIN);
+decode_results results;
+
+// Ultrasonic sensor pins
+const int trigPin = 11;
+const int echoPin = 12;
+const int OBSTACLE_DISTANCE_THRESHOLD = 30; // in cm
+
+
+void setup() {
+  Serial.begin(9600);
+  irrecv.enableIRIn();  // Start IR receiver
+
+  // Motor pins
+  pinMode(motorA1, OUTPUT);
+  pinMode(motorA2, OUTPUT);
+  pinMode(motorB1, OUTPUT);
+  pinMode(motorB2, OUTPUT);
+  pinMode(enableA, OUTPUT);
+  pinMode(enableB, OUTPUT);
+  
+  //Ultrasonic sensor pins
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  // Set initial speed
+  analogWrite(enableA, 200); // 0–255
+  analogWrite(enableB, 200);
+}
+
+void loop() {
+   long distance = getDistance();
+  Serial.print("Distance: ");
+Serial.print(distance);
+Serial.println(" cm");
+
+  
+  if (distance <= OBSTACLE_DISTANCE_THRESHOLD) {
+    Serial.println("Obstacle detected! Stopping motors.");
+    stopMotors();
+    delay(200); // Pause to avoid rapid toggling
+    return;     // Skip IR reading if obstacle is in path
+  }
+
+  if (irrecv.decode()) {
+    unsigned long command = irrecv.decodedIRData.command;
+    Serial.print("Received Command: ");
+    Serial.println(command, HEX);
+
+    switch (command) {
+      case 0x10: // "1" → Forward
+        moveForward();
+        break;
+      case 0x11: // "2" → Backward
+        moveBackward();
+        break;
+      case 0x4: // "Back" arrow → Turn left
+        turnLeft();
+        break;
+      case 0x6: // "Forward" arrow → Turn right
+        turnRight();
+        break;
+      default:
+        stopMotors();
+        break;
+    }
+    irrecv.resume();
+}
+}
+// Motor movement functions
+void moveForward() {
+  digitalWrite(motorA1, HIGH);
+  digitalWrite(motorA2, LOW);
+  digitalWrite(motorB1, HIGH);
+  digitalWrite(motorB2, LOW);
+}
+
+void moveBackward() {
+  digitalWrite(motorA1, LOW);
+  digitalWrite(motorA2, HIGH);
+  digitalWrite(motorB1, LOW);
+  digitalWrite(motorB2, HIGH);
+}
+
+void turnLeft() {
+  digitalWrite(motorA1, LOW);
+  digitalWrite(motorA2, HIGH);
+  digitalWrite(motorB1, HIGH);
+  digitalWrite(motorB2, LOW);
+}
+
+void turnRight() {
+  digitalWrite(motorA1, HIGH);
+  digitalWrite(motorA2, LOW);
+  digitalWrite(motorB1, LOW);
+  digitalWrite(motorB2, HIGH);
+}
+
+void stopMotors() {
+  digitalWrite(motorA1, LOW);
+  digitalWrite(motorA2, LOW);
+  digitalWrite(motorB1, LOW);
+  digitalWrite(motorB2, LOW);
+}
+
+// get distance from ultrasonic
+long getDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH);
+  long distance = duration * 0.034 / 2; // Convert to cm
+  return distance;
+}
