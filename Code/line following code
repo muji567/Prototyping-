@@ -1,0 +1,105 @@
+// Motor Driver Pins
+const int motorA1 = 5;       // Left motor direction
+const int motorA2 = 6;       // Left motor direction
+const int motorB1 = 7;       // Right motor direction
+const int motorB2 = 8;       // Right motor direction
+const int enableA = 3;       // Left motor PWM speed
+const int enableB = 10;      // Right motor PWM speed
+
+// Sensor Pins
+const int irLeft = 4;        // Left IR sensor
+const int irRight = 2;       // Right IR sensor
+
+// Control Parameters
+const int FORWARD_SPEED = 100;  // Main driving speed
+const int TURN_SPEED = 70;    // Turning speed when correcting course
+
+// Global Variables
+int lastTurn = 0; // Remembers the last turn direction (1=left, 2=right)
+
+void setup() {
+  Serial.begin(9600);
+
+  // Set motor pins to OUTPUT
+  pinMode(motorA1, OUTPUT);
+  pinMode(motorA2, OUTPUT);
+  pinMode(motorB1, OUTPUT);
+  pinMode(motorB2, OUTPUT);
+  pinMode(enableA, OUTPUT);
+  pinMode(enableB, OUTPUT);
+
+  // Set sensor pins to INPUT
+  pinMode(irLeft, INPUT);
+  pinMode(irRight, INPUT);
+
+  Serial.println("Line Follower Initialized.");
+  delay(1000);
+}
+
+void loop() {
+  // Read sensor values (0 = white, 1 = black)
+  int leftSensor = digitalRead(irLeft);
+  int rightSensor = digitalRead(irRight);
+
+  // Print sensor status for debugging
+  Serial.print("Left: "); Serial.print(leftSensor);
+  Serial.print(" | Right: "); Serial.println(rightSensor);
+
+  // Both sensors on black: move forward
+  if (leftSensor == 1 && rightSensor == 1) {
+    moveForward();
+    lastTurn = 0; // On track, so reset last turn memory
+  }
+  // Left sensor is on white, right is on black: turn right to correct
+  else if (leftSensor == 0 && rightSensor == 1) {
+    turnRight();
+    lastTurn = 2; // Remember we turned right
+  }
+  // Right sensor is on white, left is on black: turn left to correct
+  else if (leftSensor == 1 && rightSensor == 0) {
+    turnLeft();
+    lastTurn = 1; // Remember we turned left
+  }
+  // Both sensors on white: line is lost, search for it
+  else {
+    if (lastTurn == 1) { // If last turn was left, keep turning left
+      turnLeft();
+    } else { // Otherwise, turn right
+      turnRight();
+    }
+  }
+}
+
+// --- Motor Functions ---
+
+// Move both motors forward
+void moveForward() {
+  analogWrite(enableA, FORWARD_SPEED);
+  analogWrite(enableB, FORWARD_SPEED);
+  digitalWrite(motorA1, HIGH);
+  digitalWrite(motorA2, LOW);
+  digitalWrite(motorB1, HIGH);
+  digitalWrite(motorB2, LOW);
+}
+
+// Turn left by stopping the left motor and running the right
+void turnLeft() {
+  analogWrite(enableA, 0); // Stop left motor
+  analogWrite(enableB, TURN_SPEED); // Drive right motor
+  digitalWrite(motorB1, HIGH);
+  digitalWrite(motorB2, LOW);
+}
+
+// Turn right by stopping the right motor and running the left
+void turnRight() {
+  analogWrite(enableA, TURN_SPEED); // Drive left motor
+  analogWrite(enableB, 0); // Stop right motor
+  digitalWrite(motorA1, HIGH);
+  digitalWrite(motorA2, LOW);
+}
+
+// Stop all motor activity
+void stopMotors() {
+  analogWrite(enableA, 0);
+  analogWrite(enableB, 0);
+}
