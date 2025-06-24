@@ -1,0 +1,246 @@
+#include <Servo.h>
+#include <NewPing.h>
+
+// --- Pin Definitions ---
+//Define the ultrasonic sensor pinss
+#define TRIGGER_PIN 11
+#define ECHO_PIN 12
+#define max_distance 50
+
+// Motor Driver Pins
+const int motorA1 = 5;       // Left motor direction
+const int motorA2 = 6;       // Left motor direction
+const int motorB1 = 7;       // Right motor direction
+const int motorB2 = 8;       // Right motor direction
+const int enableA = 3;       // Left motor PWM speed
+const int enableB = 10;      // Right motor PWM speed
+const int servoPin = 9;
+
+// --- color sensor pins
+#define S0 A0
+#define S1 A1
+#define S2 A2
+#define S3 A3
+#define colorOut A4
+
+Servo servo;
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, max_distance);
+
+// Sensor Pins
+const int irLeft = 4;        // Left IR sensor
+const int irRight = 2;       // Right IR sensor
+
+// --- Control Parameters ---
+const int FORWARD_SPEED = 85;  // Main driving speed (0-255)
+const int TURN_SPEED = 60;    // Turning speed when correcting course (0-255)
+
+// --- Global Variables ---
+int lastTurn = 0; // Remembers the last turn direction (1=left, 2=right)
+int distance = 0;
+int leftDistance;
+int rightDistance;
+boolean object;
+
+void setup() {
+  Serial.begin(9600);
+  // Set motor pins to OUTPUT
+  pinMode(motorA1, OUTPUT);
+  pinMode(motorA2, OUTPUT);
+  pinMode(motorB1, OUTPUT);
+  pinMode(motorB2, OUTPUT);
+  pinMode(enableA, OUTPUT);
+  pinMode(enableB, OUTPUT);
+
+  // Set sensor pins to INPUT
+  pinMode(irLeft, INPUT);
+  pinMode(irRight, INPUT);
+  servo.attach(servoPin);
+  servo.write(90);      // start centered
+
+  // Setup Color sensor pins
+  pinMode(s0, OUTPUT);
+  pinMode(s1, OUTPUT);
+  pinMode(s2, OUTPUT);
+  pinMode(s3, OUTPUT);
+  pinMode(colorOut, INPUT);
+  // Set frequency scaling to 20%
+  digitalWrite(s0, HIGH);
+  digitalWrite(s1, LOW);
+
+  Serial.println("Line Follower Initialized.");
+  delay(1000);
+}
+
+void loop(){
+  // Read sensor values (0 = white, 1 = black)
+  int leftSensor = digitalRead(irLeft);
+  int rightSensor = digitalRead(irRight);
+
+  // Print sensor status for debugging
+  Serial.print("Left: "); Serial.print(leftSensor);
+  Serial.print(" | Right: "); Serial.println(rightSensor);
+
+  // Both sensors on black: move forward
+  if (leftSensor == 1 && rightSensor == 1) {
+    objectAvoid();
+    moveForward();
+    lastTurn = 0; // On track, so reset last turn memory
+  }
+  // Left sensor is on white, right is on black: turn right to correct
+  else if (leftSensor == 0 && rightSensor == 1) {
+    objectAvoid();
+    turnRight();
+    lastTurn = 2; // Remember we turned right
+  }
+  // Right sensor is on white, left is on black: turn left to correct
+  else if (leftSensor == 1 && rightSensor == 0) {
+    objectAvoid();
+    turnLeft();
+    lastTurn = 1; // Remember we turned left
+  }
+  // Both sensors on white: line is lost, search for it
+  else {
+    if (lastTurn == 1) { // If last turn was left, keep turning left
+      objectAvoid();
+      turnLeft();
+    } else { // Otherwise, turn right
+      objectAvoid();
+      turnRight();
+    }
+  }
+}
+
+// --- Motor Functions ---
+
+// --- Detect and Avoid object ---
+void objectAvoid() {
+  distance = getDistance();
+  if (distance <= 20){
+    //stop
+    stopMotors();
+    delay(100);
+    moveBackward();
+    stopMotors();
+    lookLeft();
+    lookRight();
+    delay(100);
+    if (rightDistance <= leftDistance) {
+      //left
+      object = true;
+      turn();
+    } else {
+      //right
+      object = false;
+      turn();
+    }
+    delay(100);
+  }
+}
+
+// --- Servo motor looks left ---
+void lookLeft(){
+  servo.write(160); //180 degree is most left position
+  delay(500);
+  Serial.write("servo turns 180 degree, looking left\n");
+ 
+  servo.write(90);
+  delay(500);
+  Serial.write("servo in 90 degree, looking forward\n");
+}
+
+// --- Servo motor looks right ---
+void lookRight(){
+  servo.write(20); //0 degree is the right most position
+  delay(500);
+  Serial.write("servo in 0 degree, looking right\n ");
+ 
+  servo.write(90);
+  delay(500);
+  Serial.write("servo in 90 degree, looking forward.\n");
+}
+
+// Move both motors forward
+void moveForward(){
+  analogWrite(enableA, FORWARD_SPEED);
+  analogWrite(enableB, FORWARD_SPEED);
+  digitalWrite(motorA1, HIGH);
+  digitalWrite(motorA2, LOW);
+  digitalWrite(motorB1, HIGH);
+  digitalWrite(motorB2, LOW);
+}
+void moveBackward(){
+  analogWrite(enableA, FORWARD_SPEED);
+  analogWrite(enableB, FORWARD_SPEED);
+  digitalWrite(motorA1, LOW);
+  digitalWrite(motorA2, HIGH);
+  digitalWrite(motorB1, LOW);
+  digitalWrite(motorB2, HIGH);
+  delay(800);
+  stopMotors();
+}
+
+// Turn left by stopping the left motor and running the right
+void turnLeft(){
+  analogWrite(enableA, 0); // Stop left motor
+  analogWrite(enableB, TURN_SPEED); // Drive right motor
+  digitalWrite(motorB1, HIGH);
+  digitalWrite(motorB2, LOW);
+}
+
+// Turn right by stopping the right motor and running the left
+void turnRight(){
+  analogWrite(enableA, TURN_SPEED); // Drive left motor
+  analogWrite(enableB, 0); // Stop right motor
+  digitalWrite(motorA1, HIGH);
+  digitalWrite(motorA2, LOW);
+}
+
+// Stop all motor activity
+void stopMotors(){
+  analogWrite(enableA, 0);
+  analogWrite(enableB, 0);
+   }
+   
+ void turn(){
+  if (object == false) {
+    turnLeft();
+    delay(700);
+    moveForward();
+    delay(800);
+    turnRight();
+    delay(900);
+    if (digitalRead(irRight) == 1) {
+      loop();
+    } else {
+      moveForward();
+    }
+  }
+  else {
+    turnRight();
+    delay(700);
+    moveForward();
+    delay(800);
+    turnLeft();
+    delay(900);
+    if (digitalRead(irLeft) == 1) {
+      loop();
+    } else {
+      moveForward();
+    }
+  }
+}
+
+int getDistance(){
+    delay(50);
+  int cm = sonar.ping_cm();
+  if (cm == 0) {
+    cm = 100;
+  }
+  return cm;
+}
+
+
+
+
+
+
