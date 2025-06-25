@@ -17,10 +17,10 @@ const int enableB = 10;      // Right motor PWM speed
 const int servoPin = 9;
 
 // --- color sensor pins
-#define S0 A0
-#define S1 A1
-#define S2 A2
-#define S3 A3
+#define s0 A0
+#define s1 A1
+#define s2 A2
+#define s3 A3
 #define colorOut A4
 
 Servo servo;
