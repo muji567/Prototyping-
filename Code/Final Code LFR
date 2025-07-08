@@ -1,0 +1,250 @@
+#include <Servo.h>
+#include <NewPing.h>
+
+// --- Pin Definitions ---
+#define TRIGGER_PIN 11
+#define ECHO_PIN 12
+#define MAX_DISTANCE 50
+const int motorA1 = 5, motorA2 = 6, motorB1 = 7, motorB2 = 8;
+const int enableA = 3, enableB = 10;
+const int servoPin = 9;
+const int irLeft = 4, irRight = 2;
+
+// --- Control Parameters ---
+const int FORWARD_SPEED = 100;
+const int TURN_SPEED = 70;
+const int OBSTACLE_THRESHOLD = 20;
+
+// --- Main Robot State Machine ---
+enum RobotState {
+  LINE_FOLLOWING,
+  OBSTACLE_AVOIDANCE
+};
+RobotState currentState = LINE_FOLLOWING;
+
+// --- Obstacle Avoidance Sub-State Machine ---
+enum AvoidanceStep {
+  NONE,
+  START,
+  REVERSING,
+  STOP_AFTER_REVERSE,
+  LOOKING_LEFT,
+  LOOKING_RIGHT,
+  DECIDING_PATH,
+  TURNING,
+  DRIVING_STRAIGHT,
+  RETURNING_TO_LINE,
+  SEARCHING_FOR_LINE
+};
+AvoidanceStep currentAvoidanceStep = NONE;
+
+// --- Global Objects & Variables ---
+Servo servo;
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
+unsigned long actionTimer = 0; // Timer for non-blocking delays
+unsigned long pingTimer = 0;   // Timer to limit sonar pings
+int lastTurn = 0;
+int leftAvoidanceDist = 0, rightAvoidanceDist = 0;
+bool turnLeftForAvoidance = false;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(motorA1, OUTPUT); pinMode(motorA2, OUTPUT);
+  pinMode(motorB1, OUTPUT); pinMode(motorB2, OUTPUT);
+  pinMode(enableA, OUTPUT); pinMode(enableB, OUTPUT);
+  pinMode(irLeft, INPUT); pinMode(irRight, INPUT);
+  servo.attach(servoPin);
+  servo.write(90);
+  delay(500); // A small delay in setup is acceptable.
+  Serial.println("Robot with Non-Blocking Logic Initialized.");
+}
+
+void loop() {
+  // Check for obstacles only if we are currently following the line
+  if (currentState == LINE_FOLLOWING && isObstacleDetected()) {
+    currentState = OBSTACLE_AVOIDANCE;
+    currentAvoidanceStep = START; // Begin the avoidance sequence
+  }
+
+  // Main state machine
+  switch (currentState) {
+    case LINE_FOLLOWING:
+      followLine();
+      break;
+    case OBSTACLE_AVOIDANCE:
+      avoidObstacle();
+      break;
+  }
+}
+
+// === Main Behaviors ===
+
+void avoidObstacle() {
+  unsigned long currentTime = millis();
+
+  switch (currentAvoidanceStep) {
+    case START:
+      Serial.println("--- Obstacle Detected! Starting Avoidance ---");
+      stopMotors();
+      actionTimer = currentTime;
+      currentAvoidanceStep = REVERSING;
+      break;
+
+    case REVERSING:
+      moveBackward();
+      if (currentTime - actionTimer >= 400) { // Reverse for 400ms
+        stopMotors();
+        actionTimer = currentTime;
+        currentAvoidanceStep = STOP_AFTER_REVERSE;
+      }
+      break;
+
+    case STOP_AFTER_REVERSE:
+      if (currentTime - actionTimer >= 200) { // Pause for 200ms
+        servo.write(170); // Look left
+        actionTimer = currentTime;
+        currentAvoidanceStep = LOOKING_LEFT;
+      }
+      break;
+
+    case LOOKING_LEFT:
+      if (currentTime - actionTimer >= 500) { // Wait for servo
+        leftAvoidanceDist = sonar.ping_cm();
+        if(leftAvoidanceDist == 0) leftAvoidanceDist = MAX_DISTANCE;
+        Serial.print("Left Distance: "); Serial.println(leftAvoidanceDist);
+        servo.write(10); // Look right
+        actionTimer = currentTime;
+        currentAvoidanceStep = LOOKING_RIGHT;
+      }
+      break;
+
+    case LOOKING_RIGHT:
+      if (currentTime - actionTimer >= 1000) { // Wait for servo (longer since it moves from 170 to 10)
+        rightAvoidanceDist = sonar.ping_cm();
+        if(rightAvoidanceDist == 0) rightAvoidanceDist = MAX_DISTANCE;
+        Serial.print("Right Distance: "); Serial.println(rightAvoidanceDist);
+        servo.write(90); // Return to center
+        actionTimer = currentTime;
+        currentAvoidanceStep = DECIDING_PATH;
+      }
+      break;
+
+    case DECIDING_PATH:
+       if (currentTime - actionTimer >= 500) { // Wait for servo to center
+        turnLeftForAvoidance = (leftAvoidanceDist >= rightAvoidanceDist);
+        if(turnLeftForAvoidance) Serial.println("Path clearer to the left.");
+        else Serial.println("Path clearer to the right.");
+        actionTimer = currentTime;
+        currentAvoidanceStep = TURNING;
+       }
+      break;
+
+    case TURNING:
+      if (turnLeftForAvoidance) turnLeft(); else turnRight();
+      if (currentTime - actionTimer >= 600) { // Turn for 600ms
+        actionTimer = currentTime;
+        currentAvoidanceStep = DRIVING_STRAIGHT;
+      }
+      break;
+
+    case DRIVING_STRAIGHT:
+      moveForward();
+      if (currentTime - actionTimer >= 800) { // Drive forward for 800ms
+        actionTimer = currentTime;
+        currentAvoidanceStep = RETURNING_TO_LINE;
+      }
+      break;
+
+    case RETURNING_TO_LINE:
+      if (turnLeftForAvoidance) turnRight(); else turnLeft();
+      if (currentTime - actionTimer >= 800) { // Turn back
+        actionTimer = currentTime;
+        currentAvoidanceStep = SEARCHING_FOR_LINE;
+        Serial.println("Searching for line...");
+      }
+      break;
+
+    case SEARCHING_FOR_LINE:
+      moveForward();
+      // If we find the line, the maneuver is over
+      if(digitalRead(irLeft) == 1 || digitalRead(irRight) == 1){
+        Serial.println("Line re-acquired!");
+        stopMotors();
+        currentAvoidanceStep = NONE; // Reset sub-state
+        currentState = LINE_FOLLOWING; // Go back to main state
+      }
+      break;
+  }
+}
+
+void followLine() {
+  int leftSensor = digitalRead(irLeft);
+  int rightSensor = digitalRead(irRight);
+
+  // Both sensors on black: move forward
+  if (leftSensor == 1 && rightSensor == 1) {
+    moveForward();
+    lastTurn = 0;
+  }
+  // Left on white, right on black: turn right
+  else if (leftSensor == 0 && rightSensor == 1) {
+    turnRight();
+    lastTurn = 2;
+  }
+  // Right on white, left on black: turn left
+  else if (leftSensor == 1 && rightSensor == 0) {
+    turnLeft();
+    lastTurn = 1;
+  }
+  // Both on white: search for the line
+  else {
+    if (lastTurn == 1) {
+      turnLeft();
+    } else {
+      turnRight();
+    }
+  }
+}
+
+// === Sensor & Utility Functions ===
+bool isObstacleDetected() {
+  // Only ping the sonar every 50ms to avoid interference
+  if (millis() - pingTimer >= 50) {
+    pingTimer = millis();
+    int distance = sonar.ping_cm();
+    return (distance > 0 && distance < OBSTACLE_THRESHOLD);
+  }
+  return false;
+}
+
+// === Motor Primitives ===
+void moveForward() {
+  analogWrite(enableA, FORWARD_SPEED);
+  analogWrite(enableB, FORWARD_SPEED);
+  digitalWrite(motorA1, HIGH); digitalWrite(motorA2, LOW);
+  digitalWrite(motorB1, HIGH); digitalWrite(motorB2, LOW);
+}
+
+void moveBackward() {
+  analogWrite(enableA, FORWARD_SPEED);
+  analogWrite(enableB, FORWARD_SPEED);
+  digitalWrite(motorA1, LOW); digitalWrite(motorA2, HIGH);
+  digitalWrite(motorB1, LOW); digitalWrite(motorB2, HIGH);
+}
+
+void turnLeft() {
+  analogWrite(enableA, 0);
+  analogWrite(enableB, TURN_SPEED);
+  digitalWrite(motorB1, HIGH); digitalWrite(motorB2, LOW);
+}
+
+void turnRight() {
+  analogWrite(enableA, TURN_SPEED);
+  analogWrite(enableB, 0);
+  digitalWrite(motorA1, HIGH); digitalWrite(motorA2, LOW);
+}
+
+void stopMotors() {
+  analogWrite(enableA, 0);
+  analogWrite(enableB, 0);
+}
